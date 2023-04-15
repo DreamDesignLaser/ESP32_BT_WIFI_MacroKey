@@ -1,0 +1,186 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <BleKeyboard.h>
+#include <Preferences.h>
+
+const char* ssid = "KeyDDL";
+const char* password = "87654321";
+WebServer server(80);
+BleKeyboard bleKeyboard;
+const int buttonPins[] = {2, 4, 5, 12, 13, 14, 15, 16, 17};
+const int buttonCount = sizeof(buttonPins) / sizeof(buttonPins[0]);
+String messages[buttonCount];
+bool leftAltPressed[buttonCount];
+bool rightAltPressed[buttonCount];
+bool leftCtrlPressed[buttonCount];
+bool rightCtrlPressed[buttonCount];
+bool leftShiftPressed[buttonCount];
+bool rightShiftPressed[buttonCount];
+Preferences preferences;
+bool buttonState[buttonCount];
+
+void handleRoot() {
+    String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0'></head><body>";
+    html += "<style>"
+            ":root {"
+            "--button-size: calc(min(100vw / 3 - 20px, 100vh / 3 - 20px));"
+            "}"
+            ".grid-container {"
+            "display: grid;"
+            "grid-template-columns: repeat(auto-fit, minmax(var(--button-size), 1fr));"
+            "grid-gap: 10px;"
+            "padding: 10px;"
+            "}"
+            ".grid-item {"
+            "display: flex;"
+            "justify-content: center;"
+            "align-items: center;"
+            "background-color: #4CAF50;"
+            "border: none;"
+            "color: white;"
+            "padding: 20px;"
+            "text-align: center;"
+            "text-decoration: none;"
+            "font-size: calc(var(--button-size) / 5);"
+            "border-radius: calc(var(--button-size) / 10);"
+            "}"
+            ".grid-item:hover {"
+            "background-color: #3e8e41;"
+            "}"
+            "</style>";
+
+    html += "<div class='grid-container'>";
+
+    for (int i = 0; i < buttonCount; i++) {
+        html += "<a class='grid-item' href='/button?index=" + String(i) + "'>Button " + String(i + 1) + "</a>";
+    }
+
+    html += "</div>";
+
+    html += "</body></html>";
+
+    server.send(200, "text/html", html);
+}
+void handleButton() {
+    if (server.hasArg("index")) {
+        int buttonIndex = server.arg("index").toInt();
+        if (buttonIndex >= 0 && buttonIndex < buttonCount) {
+            String html = "<html><body>";
+            html += "<form action='/message' method='POST'>"
+                    "<label for='message'>Enter message for button " + String(buttonIndex + 1) + ": </label><input type='text' id='message' name='message'><br><br>"
+                    "<input type='checkbox' id='leftAlt' name='leftAlt' value='true'>"
+                    "<label for='leftAlt'> Left Alt</label><br>"
+                    "<input type='checkbox' id='rightAlt' name='rightAlt' value='true'>"
+                    "<label for='rightAlt'> Right Alt</label><br>"
+                    "<input type='checkbox' id='leftCtrl' name='leftCtrl' value='true'>"
+                    "<label for='leftCtrl'> Left Ctrl</label><br>"
+                    "<input type='checkbox' id='rightCtrl' name='rightCtrl' value='true'>"
+                    "<label for='rightCtrl'> Right Ctrl</label><br>"
+                    "<input type='checkbox' id='leftShift' name='leftShift' value='true'>"
+                    "<label for='leftShift'> Left Shift</label><br>"
+                    "<input type='checkbox' id='rightShift' name='rightShift' value='true'>"
+                    "<label for=rightShift'> Right Shift</label><br><br>"
+                    "<input type='hidden' name='button' value='" + String(buttonIndex) + "'>"
+                    "<input type='submit' value='Submit'>"
+                    "</form>";
+            html += "</body></html>";
+            server.send(200, "text/html", html);
+        } else {
+            server.send(400, "text/plain", "Invalid button index");
+        }
+    } else {
+        server.send(400, "text/plain", "Missing button index");
+    }
+}
+
+void handleMessage() {
+    if (server.hasArg("message") && server.hasArg("button")) {
+        int buttonIndex = server.arg("button").toInt();
+        if (buttonIndex >= 0 && buttonIndex < buttonCount) {
+            messages[buttonIndex] = server.arg("message");
+            preferences.putString(("message" + String(buttonIndex)).c_str(), messages[buttonIndex].c_str());
+
+            leftAltPressed[buttonIndex] = server.hasArg("leftAlt") && server.arg("leftAlt") == "true";
+            preferences.putBool(("leftAlt" + String(buttonIndex)).c_str(), leftAltPressed[buttonIndex]);
+
+            rightAltPressed[buttonIndex] = server.hasArg("rightAlt") && server.arg("rightAlt") == "true";
+            preferences.putBool(("rightAlt" + String(buttonIndex)).c_str(), rightAltPressed[buttonIndex]);
+
+            leftCtrlPressed[buttonIndex] = server.hasArg("leftCtrl") && server.arg("leftCtrl") == "true";
+            preferences.putBool(("leftCtrl" + String(buttonIndex)).c_str(), leftCtrlPressed[buttonIndex]);
+
+            rightCtrlPressed[buttonIndex] = server.hasArg("rightCtrl") && server.arg("rightCtrl") == "true";
+            preferences.putBool(("rightCtrl" + String(buttonIndex)).c_str(), rightCtrlPressed[buttonIndex]);
+
+            leftShiftPressed[buttonIndex] = server.hasArg("leftShift") && server.arg("leftShift") == "true";
+            preferences.putBool(("leftShift" + String(buttonIndex)).c_str(), leftShiftPressed[buttonIndex]);
+
+            rightShiftPressed[buttonIndex] = server.hasArg("rightShift") && server.arg("rightShift") == "true";
+            preferences.putBool(("rightShift" + String(buttonIndex)).c_str(), rightShiftPressed[buttonIndex]);
+        }
+    }
+    server.sendHeader("Location", "/");
+    server.send(303);
+}
+void setup() {
+    Serial.begin(115200);
+
+    WiFi.softAP(ssid, password);
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP);
+
+    for (int i = 0; i < buttonCount; i++) {
+        pinMode(buttonPins[i], INPUT_PULLDOW);
+        buttonState[i] = digitalRead(buttonPins[i]);
+    }
+
+    server.on("/", handleRoot);
+    server.on("/button", handleButton);
+    server.on("/message", HTTP_POST, handleMessage);
+    server.begin();
+
+    bleKeyboard.begin();
+
+    preferences.begin("my-app", false);
+
+    for (int i = 0; i < buttonCount; i++) {
+        messages[i] = preferences.getString(("message" + String(i)).c_str(), "");
+        leftAltPressed[i] = preferences.getBool(("leftAlt" + String(i)).c_str(), false);
+        rightAltPressed[i] = preferences.getBool(("rightAlt" + String(i)).c_str(), false);
+        leftCtrlPressed[i] = preferences.getBool(("leftCtrl" + String(i)).c_str(), false);
+        rightCtrlPressed[i] = preferences.getBool(("rightCtrl" + String(i)).c_str(), false);
+        leftShiftPressed[i] = preferences.getBool(("leftShift" + String(i)).c_str(), false);
+        rightShiftPressed[i] = preferences.getBool(("rightShift" + String(i)).c_str(), false);
+    }
+}
+
+void loop() {
+    server.handleClient();
+
+    for (int i = 0; i < buttonCount; i++) {
+        bool currentState = digitalRead(buttonPins[i]);
+        if (currentState != buttonState[i]) {
+            if (currentState == HIGH && bleKeyboard.isConnected()) {
+                if (leftAltPressed[i]) bleKeyboard.press(KEY_LEFT_ALT);
+                if (rightAltPressed[i]) bleKeyboard.press(KEY_RIGHT_ALT);
+                if (leftCtrlPressed[i]) bleKeyboard.press(KEY_LEFT_CTRL);
+                if (rightCtrlPressed[i]) bleKeyboard.press(KEY_RIGHT_CTRL);
+                if (leftShiftPressed[i]) bleKeyboard.press(KEY_LEFT_SHIFT);
+                if (rightShiftPressed[i]) bleKeyboard.press(KEY_RIGHT_SHIFT);
+
+                bleKeyboard.print(messages[i]);
+
+                if (leftAltPressed[i]) bleKeyboard.release(KEY_LEFT_ALT);
+                if (rightAltPressed[i]) bleKeyboard.release(KEY_RIGHT_ALT);
+                if (leftCtrlPressed[i]) bleKeyboard.release(KEY_LEFT_CTRL);
+                if (rightCtrlPressed[i]) bleKeyboard.release(KEY_RIGHT_CTRL);
+                if (leftShiftPressed[i]) bleKeyboard.release(KEY_LEFT_SHIFT);
+                if (rightShiftPressed[i]) bleKeyboard.release(KEY_RIGHT_SHIFT);
+
+                delay(100);
+            }
+            buttonState[i] = currentState;
+        }
+    }
+}
